@@ -1,21 +1,23 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
-import HomeScreen from './src/screens/HomeScreen';
-import SubscriptionScreen from './src/screens/SubscriptionScreen';
-import { RootStackParamList } from './src/types/navigation';
+import AppErrorBoundary from './src/core/error-boundary/AppErrorBoundary';
+import RootNavigator from './src/navigation/RootNavigator';
 
-const Stack = createNativeStackNavigator<RootStackParamList>();
-
-export default function App() {
+/**
+ * Composition root.
+ * Responsibilities are intentionally limited to:
+ *   1. Mounting the error boundary so all render errors are captured.
+ *   2. Providing the navigation container context.
+ *   3. Delegating screen routing to RootNavigator.
+ */
+export default function App(): React.JSX.Element {
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen name="Subscription" component={SubscriptionScreen} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <AppErrorBoundary>
+      <NavigationContainer>
+        <StatusBar style="auto" />
+        <RootNavigator />
+      </NavigationContainer>
+    </AppErrorBoundary>
   );
 }
