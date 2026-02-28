@@ -6,6 +6,7 @@ import type {
   WebViewNavigationEvent,
   WebViewErrorEvent,
   WebViewHttpErrorEvent,
+  WebViewMessageEvent,
 } from 'react-native-webview/lib/WebViewTypes';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
@@ -15,6 +16,7 @@ import Config from '../../core/config';
 import Logger from '../../core/logger';
 import ControlCenter from './ControlCenter';
 import { WebViewStatus } from './types';
+import { VIDEO_DETECTOR_JS, VideoDetectionPayload } from './videoDetection';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -24,12 +26,14 @@ export default function HomeScreen(): React.JSX.Element {
 
   const [webViewStatus, setWebViewStatus] = useState<WebViewStatus>('Loading');
   const [controlCenterVisible, setControlCenterVisible] = useState(false);
+  const [detectedVideoCount, setDetectedVideoCount] = useState(0);
 
   // ── WebView telemetry ──────────────────────────────────────────────────────
 
   const handleLoadStart = useCallback((_event: WebViewNavigationEvent): void => {
     Logger.info('WebView onLoadStart');
     setWebViewStatus('Loading');
+    setDetectedVideoCount(0);
   }, []);
 
   const handleLoadEnd = useCallback((_event: WebViewNavigationEvent | WebViewErrorEvent): void => {
@@ -53,6 +57,26 @@ export default function HomeScreen(): React.JSX.Element {
       loading: state.loading,
       canGoBack: state.canGoBack,
     });
+  }, []);
+
+  // ── Video detection bridge (Phase-2 scaffold) ──────────────────────────────
+
+  const handleMessage = useCallback((event: WebViewMessageEvent): void => {
+    try {
+      const parsed: unknown = JSON.parse(event.nativeEvent.data);
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        (parsed as Record<string, unknown>).type === 'VIDEO_DETECTED' &&
+        typeof (parsed as Record<string, unknown>).count === 'number'
+      ) {
+        const payload = parsed as VideoDetectionPayload;
+        Logger.debug('Video detection bridge', { count: payload.count });
+        setDetectedVideoCount(payload.count);
+      }
+    } catch {
+      // Malformed message from injected JS — ignore.
+    }
   }, []);
 
   // ── UI handlers ────────────────────────────────────────────────────────────
@@ -82,6 +106,8 @@ export default function HomeScreen(): React.JSX.Element {
       <WebView
         source={{ uri: Config.INSTAGRAM_URL }}
         style={styles.webview}
+        injectedJavaScript={VIDEO_DETECTOR_JS}
+        onMessage={handleMessage}
         onLoadStart={handleLoadStart}
         onLoadEnd={handleLoadEnd}
         onError={handleWebViewError}
@@ -103,6 +129,7 @@ export default function HomeScreen(): React.JSX.Element {
       <ControlCenter
         visible={controlCenterVisible}
         webViewStatus={webViewStatus}
+        detectedVideoCount={detectedVideoCount}
         onNavigateToSubscription={handleNavigateToSubscription}
         onClose={handleCloseControlCenter}
       />

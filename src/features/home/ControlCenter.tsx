@@ -14,6 +14,8 @@ import Logger from '../../core/logger';
 interface Props {
   visible: boolean;
   webViewStatus: WebViewStatus;
+  /** Number of <video> elements detected on the current page (Phase-2 bridge). */
+  detectedVideoCount: number;
   onNavigateToSubscription: () => void;
   onClose: () => void;
 }
@@ -25,9 +27,15 @@ const STATUS_COLOR: Record<WebViewStatus, string> = {
   Error: '#EF4444',
 };
 
+/** Colour for the video-detection dot when at least one video is present. */
+const VIDEO_DETECTED_COLOR = '#22C55E';
+/** Colour for the video-detection dot when no videos have been detected. */
+const VIDEO_NONE_COLOR = '#DDDDDD';
+
 export default function ControlCenter({
   visible,
   webViewStatus,
+  detectedVideoCount,
   onNavigateToSubscription,
   onClose,
 }: Props): React.JSX.Element {
@@ -71,6 +79,14 @@ export default function ControlCenter({
           <View style={[styles.statusDot, { backgroundColor: STATUS_COLOR[webViewStatus] }]} />
           <Text style={styles.statusLabel}>
             WebView: <Text style={styles.statusValue}>{webViewStatus}</Text>
+          </Text>
+        </View>
+
+        {/* ── Video Detection (Phase-2 bridge) ── */}
+        <View style={styles.statusRow}>
+          <View style={[styles.statusDot, { backgroundColor: detectedVideoCount > 0 ? VIDEO_DETECTED_COLOR : VIDEO_NONE_COLOR }]} />
+          <Text style={styles.statusLabel}>
+            Videos detected: <Text style={styles.statusValue}>{detectedVideoCount}</Text>
           </Text>
         </View>
 
