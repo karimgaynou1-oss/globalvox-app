@@ -8,6 +8,8 @@ import {
   StyleSheet,
 } from 'react-native';
 import { WebViewStatus, SupportedLanguage } from './types';
+import { VideoContextPayload } from './videoDetection';
+import { TranslationJob } from '../../core/translation/types';
 import Config from '../../core/config';
 import Logger from '../../core/logger';
 
@@ -16,6 +18,12 @@ interface Props {
   webViewStatus: WebViewStatus;
   /** Number of <video> elements detected on the current page (Phase-2 bridge). */
   detectedVideoCount: number;
+  /** Latest playback context from the VIDEO_CONTEXT bridge (Phase-3). */
+  videoContext: VideoContextPayload['payload'] | null;
+  /** Current translation job snapshot (null when no job is in flight). */
+  currentJob: TranslationJob | null;
+  onStartTranslation: (language: SupportedLanguage) => void;
+  onCancelTranslation: () => void;
   onNavigateToSubscription: () => void;
   onClose: () => void;
 }
@@ -36,6 +44,10 @@ export default function ControlCenter({
   visible,
   webViewStatus,
   detectedVideoCount,
+  videoContext,
+  currentJob,
+  onStartTranslation,
+  onCancelTranslation,
   onNavigateToSubscription,
   onClose,
 }: Props): React.JSX.Element {
@@ -54,6 +66,27 @@ export default function ControlCenter({
     // Defer navigation slightly to let the modal close animation complete.
     setTimeout(onNavigateToSubscription, 300);
   }, [onClose, onNavigateToSubscription]);
+
+  const handleStartTranslation = useCallback((): void => {
+    Logger.info('Start Translation pressed');
+    onStartTranslation(selectedLanguage);
+  }, [onStartTranslation, selectedLanguage]);
+
+  // Derived state
+  const isJobRunning = currentJob !== null && currentJob.status === 'running';
+  const isJobDone = currentJob !== null && currentJob.status === 'done';
+  const progressPct = currentJob?.progressPct ?? 0;
+
+  // "Start Translation" is enabled only when an active video is detected and
+  // no job is currently running or done (done resets after user interaction).
+  const hasActiveVideo = videoContext !== null && videoContext.active;
+  const canStartTranslation = hasActiveVideo && !isJobRunning && !isJobDone;
+
+  // Human-readable playback state label
+  const videoStateLabel: string = (() => {
+    if (videoContext === null || videoContext.detectedVideoCount === 0) return 'No video';
+    return videoContext.active ? 'Playing' : 'Paused';
+  })();
 
   return (
     <Modal
@@ -90,6 +123,14 @@ export default function ControlCenter({
           </Text>
         </View>
 
+        {/* ── Active Video State (Phase-3 bridge) ── */}
+        <View style={styles.statusRow}>
+          <View style={[styles.statusDot, { backgroundColor: hasActiveVideo ? VIDEO_DETECTED_COLOR : VIDEO_NONE_COLOR }]} />
+          <Text style={styles.statusLabel}>
+            Video state: <Text style={styles.statusValue}>{videoStateLabel}</Text>
+          </Text>
+        </View>
+
         {/* ── Language Selector ── */}
         <Text style={styles.sectionLabel}>Target Language</Text>
         <View style={styles.languageRow}>
@@ -118,19 +159,56 @@ export default function ControlCenter({
           ))}
         </View>
 
-        {/* ── Start Translation (disabled, Phase-2) ── */}
-        <TouchableOpacity
-          style={styles.translationButton}
-          disabled
-          activeOpacity={1}
-          accessibilityLabel="Start Translation — unavailable in Phase 1"
-          accessibilityState={{ disabled: true }}
-        >
-          <Text style={styles.translationButtonText}>Start Translation</Text>
-        </TouchableOpacity>
-        <Text style={styles.tooltipText}>
-          Phase 2: Video detection & translation pipeline will enable this.
-        </Text>
+        {/* ── Translation Job Progress (shown while running or done) ── */}
+        {(isJobRunning || isJobDone) && (
+          <View style={styles.progressContainer}>
+            <View style={styles.progressBarTrack}>
+              <View style={[styles.progressBarFill, { width: `${progressPct}%` }]} />
+            </View>
+            <Text style={styles.progressLabel}>
+              {isJobDone
+                ? 'Translation complete ✓'
+                : `Translating… ${progressPct}%`}
+            </Text>
+          </View>
+        )}
+
+        {/* ── Start Translation / Cancel ── */}
+        {isJobRunning ? (
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={onCancelTranslation}
+            activeOpacity={0.85}
+            accessibilityLabel="Cancel translation"
+            accessibilityRole="button"
+          >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={[styles.translationButton, canStartTranslation && styles.translationButtonActive]}
+              onPress={canStartTranslation ? handleStartTranslation : undefined}
+              disabled={!canStartTranslation}
+              activeOpacity={canStartTranslation ? 0.85 : 1}
+              accessibilityLabel={
+                canStartTranslation
+                  ? 'Start Translation'
+                  : 'Start Translation — no active video detected'
+              }
+              accessibilityState={{ disabled: !canStartTranslation }}
+            >
+              <Text style={[styles.translationButtonText, canStartTranslation && styles.translationButtonTextActive]}>
+                {isJobDone ? 'Translate Again' : 'Start Translation'}
+              </Text>
+            </TouchableOpacity>
+            {!hasActiveVideo && (
+              <Text style={styles.tooltipText}>
+                A playing video must be detected to enable translation.
+              </Text>
+            )}
+          </>
+        )}
 
         {/* ── Subscription ── */}
         <TouchableOpacity
@@ -189,7 +267,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F8F8',
     borderRadius: 10,
     padding: 12,
-    marginBottom: 20,
+    marginBottom: 10,
   },
   statusDot: {
     width: 10,
@@ -212,12 +290,13 @@ const styles = StyleSheet.create({
     color: '#888888',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+    marginTop: 10,
     marginBottom: 10,
   },
   languageRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   languageChip: {
     flex: 1,
@@ -241,7 +320,28 @@ const styles = StyleSheet.create({
   languageChipTextActive: {
     color: '#FFFFFF',
   },
-  // Start Translation (disabled)
+  // Progress bar
+  progressContainer: {
+    marginBottom: 16,
+  },
+  progressBarTrack: {
+    height: 8,
+    backgroundColor: '#E8E8E8',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#FF6600',
+    borderRadius: 4,
+  },
+  progressLabel: {
+    fontSize: 13,
+    color: '#555555',
+    textAlign: 'center',
+  },
+  // Start Translation (enabled / disabled states)
   translationButton: {
     width: '100%',
     backgroundColor: '#E0E0E0',
@@ -250,8 +350,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
+  translationButtonActive: {
+    backgroundColor: '#FF6600',
+  },
   translationButtonText: {
     color: '#AAAAAA',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  translationButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  // Cancel button
+  cancelButton: {
+    width: '100%',
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  cancelButtonText: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -259,7 +379,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999999',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
     lineHeight: 17,
   },
   // Subscription
@@ -269,6 +389,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
+    marginTop: 8,
   },
   subscriptionButtonText: {
     color: '#FFFFFF',

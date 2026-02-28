@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { StyleSheet, TouchableOpacity, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type {
@@ -14,9 +14,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../navigation/types';
 import Config from '../../core/config';
 import Logger from '../../core/logger';
+import { MockTranslationService } from '../../core/translation/MockTranslationService';
+import { TranslationJob } from '../../core/translation/types';
 import ControlCenter from './ControlCenter';
 import { WebViewStatus } from './types';
-import { VIDEO_DETECTOR_JS, VideoDetectionPayload } from './videoDetection';
+import { SupportedLanguage } from '../../core/translation/types';
+import { VIDEO_DETECTOR_JS, VideoContextPayload, parseWebViewMessage } from './videoDetection';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -27,6 +30,13 @@ export default function HomeScreen(): React.JSX.Element {
   const [webViewStatus, setWebViewStatus] = useState<WebViewStatus>('Loading');
   const [controlCenterVisible, setControlCenterVisible] = useState(false);
   const [detectedVideoCount, setDetectedVideoCount] = useState(0);
+  const [videoContext, setVideoContext] = useState<VideoContextPayload['payload'] | null>(null);
+  const [currentJob, setCurrentJob] = useState<TranslationJob | null>(null);
+
+  // Single service instance for the lifetime of this screen.
+  const translationService = useMemo(() => new MockTranslationService(), []);
+  // Keep a stable ref to the current job id so cancel can access it.
+  const currentJobIdRef = useRef<string | null>(null);
 
   // ── WebView telemetry ──────────────────────────────────────────────────────
 
@@ -34,6 +44,7 @@ export default function HomeScreen(): React.JSX.Element {
     Logger.info('WebView onLoadStart');
     setWebViewStatus('Loading');
     setDetectedVideoCount(0);
+    setVideoContext(null);
   }, []);
 
   const handleLoadEnd = useCallback((_event: WebViewNavigationEvent | WebViewErrorEvent): void => {
@@ -59,25 +70,58 @@ export default function HomeScreen(): React.JSX.Element {
     });
   }, []);
 
-  // ── Video detection bridge (Phase-2 scaffold) ──────────────────────────────
+  // ── Video detection bridge (Phase-2/3) ─────────────────────────────────────
 
   const handleMessage = useCallback((event: WebViewMessageEvent): void => {
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(event.nativeEvent.data);
-      if (
-        parsed !== null &&
-        typeof parsed === 'object' &&
-        (parsed as Record<string, unknown>).type === 'VIDEO_DETECTED' &&
-        typeof (parsed as Record<string, unknown>).count === 'number'
-      ) {
-        const payload = parsed as VideoDetectionPayload;
-        Logger.debug('Video detection bridge', { count: payload.count });
-        setDetectedVideoCount(payload.count);
-      }
+      parsed = JSON.parse(event.nativeEvent.data);
     } catch {
-      // Malformed message from injected JS — ignore.
+      return; // Malformed JSON — ignore.
+    }
+
+    const msg = parseWebViewMessage(parsed);
+    if (msg === null) return;
+
+    if (msg.type === 'VIDEO_DETECTED') {
+      Logger.debug('Video detection bridge', { count: msg.count });
+      setDetectedVideoCount(msg.count);
+    } else if (msg.type === 'VIDEO_CONTEXT') {
+      Logger.debug('Video context bridge', msg.payload);
+      setVideoContext(msg.payload);
+      setDetectedVideoCount(msg.payload.detectedVideoCount);
     }
   }, []);
+
+  // ── Translation job orchestration (Phase-3) ────────────────────────────────
+
+  const handleStartTranslation = useCallback((language: SupportedLanguage): void => {
+    Logger.info('Starting translation job', { language });
+    const jobId = translationService.start(
+      { source: 'instagram', targetLanguage: language },
+      (job) => {
+        if (job.status === 'idle') {
+          setCurrentJob(null);
+          currentJobIdRef.current = null;
+        } else {
+          setCurrentJob({ ...job });
+          if (job.status === 'done') {
+            currentJobIdRef.current = null;
+          }
+        }
+      },
+    );
+    currentJobIdRef.current = jobId;
+  }, [translationService]);
+
+  const handleCancelTranslation = useCallback((): void => {
+    const jobId = currentJobIdRef.current;
+    if (jobId === null) return;
+    Logger.info('Cancelling translation job', { jobId });
+    translationService.cancel(jobId);
+    currentJobIdRef.current = null;
+    setCurrentJob(null);
+  }, [translationService]);
 
   // ── UI handlers ────────────────────────────────────────────────────────────
 
@@ -130,6 +174,10 @@ export default function HomeScreen(): React.JSX.Element {
         visible={controlCenterVisible}
         webViewStatus={webViewStatus}
         detectedVideoCount={detectedVideoCount}
+        videoContext={videoContext}
+        currentJob={currentJob}
+        onStartTranslation={handleStartTranslation}
+        onCancelTranslation={handleCancelTranslation}
         onNavigateToSubscription={handleNavigateToSubscription}
         onClose={handleCloseControlCenter}
       />
