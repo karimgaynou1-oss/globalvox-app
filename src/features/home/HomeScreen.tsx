@@ -1,48 +1,111 @@
-import React, { useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { StyleSheet, TouchableOpacity, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
-import type { WebViewErrorEvent, WebViewHttpErrorEvent } from 'react-native-webview/lib/WebViewTypes';
+import type {
+  WebViewNavigation,
+  WebViewNavigationEvent,
+  WebViewErrorEvent,
+  WebViewHttpErrorEvent,
+} from 'react-native-webview/lib/WebViewTypes';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../navigation/types';
 import Config from '../../core/config';
 import Logger from '../../core/logger';
+import ControlCenter from './ControlCenter';
+import { WebViewStatus } from './types';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<HomeScreenNavigationProp>();
+  const insets = useSafeAreaInsets();
+
+  const [webViewStatus, setWebViewStatus] = useState<WebViewStatus>('Loading');
+  const [controlCenterVisible, setControlCenterVisible] = useState(false);
+
+  // ── WebView telemetry ──────────────────────────────────────────────────────
+
+  const handleLoadStart = useCallback((_event: WebViewNavigationEvent): void => {
+    Logger.info('WebView onLoadStart');
+    setWebViewStatus('Loading');
+  }, []);
+
+  const handleLoadEnd = useCallback((_event: WebViewNavigationEvent | WebViewErrorEvent): void => {
+    Logger.info('WebView onLoadEnd');
+    setWebViewStatus('Ready');
+  }, []);
 
   const handleWebViewError = useCallback((event: WebViewErrorEvent): void => {
-    Logger.warn('WebView load error', { description: event.nativeEvent.description });
+    Logger.warn('WebView onError', { description: event.nativeEvent.description });
+    setWebViewStatus('Error');
   }, []);
 
   const handleHttpError = useCallback((event: WebViewHttpErrorEvent): void => {
-    Logger.warn('WebView HTTP error', { statusCode: event.nativeEvent.statusCode });
+    Logger.warn('WebView onHttpError', { statusCode: event.nativeEvent.statusCode });
+    setWebViewStatus('Error');
   }, []);
 
-  const handleOpenSubscription = useCallback((): void => {
+  const handleNavigationStateChange = useCallback((state: WebViewNavigation): void => {
+    Logger.debug('WebView onNavigationStateChange', {
+      url: state.url,
+      loading: state.loading,
+      canGoBack: state.canGoBack,
+    });
+  }, []);
+
+  // ── UI handlers ────────────────────────────────────────────────────────────
+
+  const handleOpenControlCenter = useCallback((): void => {
+    Logger.info('Opening Control Center');
+    setControlCenterVisible(true);
+  }, []);
+
+  const handleCloseControlCenter = useCallback((): void => {
+    Logger.info('Closing Control Center');
+    setControlCenterVisible(false);
+  }, []);
+
+  const handleNavigateToSubscription = useCallback((): void => {
     Logger.info('Navigating to Subscription screen');
     navigation.navigate('Subscription');
   }, [navigation]);
 
   return (
     <View style={styles.container}>
+      {/* Top safe-area header — prevents content from sliding under the iOS notch */}
+      <View style={[styles.header, { paddingTop: insets.top }]}>
+        <Text style={styles.headerTitle}>{Config.APP_NAME}</Text>
+      </View>
+
       <WebView
         source={{ uri: Config.INSTAGRAM_URL }}
         style={styles.webview}
+        onLoadStart={handleLoadStart}
+        onLoadEnd={handleLoadEnd}
         onError={handleWebViewError}
         onHttpError={handleHttpError}
+        onNavigationStateChange={handleNavigationStateChange}
       />
+
+      {/* Floating Action Button — always rendered above the WebView */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={handleOpenSubscription}
+        onPress={handleOpenControlCenter}
         activeOpacity={0.8}
-        accessibilityLabel={Config.APP_NAME}
+        accessibilityLabel="Open GlobalVox Control Center"
         accessibilityRole="button"
       >
         <Text style={styles.fabLabel}>{Config.APP_NAME}</Text>
       </TouchableOpacity>
+
+      <ControlCenter
+        visible={controlCenterVisible}
+        webViewStatus={webViewStatus}
+        onNavigateToSubscription={handleNavigateToSubscription}
+        onClose={handleCloseControlCenter}
+      />
     </View>
   );
 }
@@ -50,6 +113,21 @@ export default function HomeScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  header: {
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E5E5',
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FF6600',
+    letterSpacing: 0.5,
   },
   webview: {
     flex: 1,
@@ -74,3 +152,4 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
+

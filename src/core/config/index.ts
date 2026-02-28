@@ -15,6 +15,14 @@ const Config = {
     PRICE_LABEL: '$20/month',
     BENEFIT: 'Unlimited Translations',
   },
+
+  /**
+   * ISO 639-1 codes for languages surfaced in the Control Center.
+   * The translation engine (Phase-2) will consume this list to populate its pipeline.
+   */
+  SUPPORTED_LANGUAGES: ['EN', 'FR', 'AR', 'ES'] as const,
+
+  DEFAULT_LANGUAGE: 'EN' as const,
 } as const;
 
 export default Config;
